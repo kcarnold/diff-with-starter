@@ -26,7 +26,9 @@ const DiffViewer = () => {
             !path.startsWith('__MACOSX/') && 
             path.endsWith('.py')) {
           const content = await zipEntry.async('string');
-          files[path] = content;
+          // Normalize the path by taking just the filename
+          const normalizedPath = path.split('/').pop() || path;
+          files[normalizedPath] = content;
         }
       }
       
@@ -49,13 +51,16 @@ const DiffViewer = () => {
       
       for (const [path, file] of Object.entries(innerContents.files)) {
         if (!file.dir && path.endsWith('.py') && !path.startsWith('__MACOSX/')) {
-          files[path] = await file.async('string');
+          // Normalize the path by taking just the filename
+          const normalizedPath = path.split('/').pop() || path;
+          files[normalizedPath] = await file.async('string');
         }
       }
     } 
     // If it's a Python file directly
     else if (zipEntry.name.endsWith('.py')) {
-      files[zipEntry.name] = await zipEntry.async('string');
+      const normalizedPath = zipEntry.name.split('/').pop() || zipEntry.name;
+      files[normalizedPath] = await zipEntry.async('string');
     }
     
     return files;
