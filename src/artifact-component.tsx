@@ -4,10 +4,13 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Upload, FileText, AlertTriangle } from 'lucide-react';
 import JSZip from 'jszip';
 import * as Diff from 'diff';
+import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 const DiffViewer = () => {
   const [starterFiles, setStarterFiles] = useState({});
-  const [submissionFiles, setSubmissionFiles] = useState({});
+  const [allSubmissions, setAllSubmissions] = useState<Record<string, Record<string, string>>>({});
+  const [currentStudent, setCurrentStudent] = useState<string | null>(null);
   const [diffs, setDiffs] = useState([]);
   const [error, setError] = useState('');
 
@@ -29,22 +32,86 @@ const DiffViewer = () => {
       
       if (isStarter) {
         setStarterFiles(files);
-      } else {
-        setSubmissionFiles(files);
       }
     } catch (err) {
       setError('Error processing ZIP file: ' + err.message);
     }
   };
 
+  const processStudentSubmission = async (zipEntry: JSZip.JSZipObject): Promise<Record<string, string>> => {
+    const files: Record<string, string> = {};
+    
+    // If it's a zip file
+    if (zipEntry.name.endsWith('.zip')) {
+      const innerZip = new JSZip();
+      const content = await zipEntry.async('blob');
+      const innerContents = await innerZip.loadAsync(content);
+      
+      for (const [path, file] of Object.entries(innerContents.files)) {
+        if (!file.dir && path.endsWith('.py') && !path.startsWith('__MACOSX/')) {
+          files[path] = await file.async('string');
+        }
+      }
+    } 
+    // If it's a Python file directly
+    else if (zipEntry.name.endsWith('.py')) {
+      files[zipEntry.name] = await zipEntry.async('string');
+    }
+    
+    return files;
+  };
+
+  const processSubmissionsZip = async (file: File) => {
+    try {
+      const zip = new JSZip();
+      const contents = await zip.loadAsync(file);
+      const submissions: Record<string, Record<string, string>> = {};
+      
+      for (const [path, zipEntry] of Object.entries(contents.files)) {
+        // Look for student submission folders
+        if (path.includes('_assignsubmission_file/') && !path.includes('_onlinetext')) {
+          const studentName = path.split('_')[0];
+          
+          if (!zipEntry.dir) {
+            const parentPath = path.split('/').slice(0, -1).join('/');
+            if (!submissions[studentName]) {
+              submissions[studentName] = {};
+            }
+            
+            if (path.endsWith('.py') || path.endsWith('.zip')) {
+              const studentFiles = await processStudentSubmission(zipEntry);
+              submissions[studentName] = { ...submissions[studentName], ...studentFiles };
+            }
+          }
+        }
+      }
+      
+      setAllSubmissions(submissions);
+      const firstStudent = Object.keys(submissions)[0];
+      setCurrentStudent(firstStudent);
+    } catch (err) {
+      setError('Error processing submissions ZIP: ' + err.message);
+    }
+  };
+
+  const handleNextStudent = () => {
+    const students = Object.keys(allSubmissions);
+    const currentIndex = students.indexOf(currentStudent!);
+    const nextIndex = (currentIndex + 1) % students.length;
+    setCurrentStudent(students[nextIndex]);
+  };
+
   useEffect(() => {
-    if (Object.keys(starterFiles).length && Object.keys(submissionFiles).length) {
-      console.log('Generating diffs...');
+    if (Object.keys(starterFiles).length && currentStudent) {
+      console.log(`Generating diffs for ${currentStudent}...`);
       generateDiffs();
     }
-  }, [starterFiles, submissionFiles]);
+  }, [starterFiles, currentStudent]);
 
   const generateDiffs = () => {
+    if (!currentStudent) return;
+    
+    const submissionFiles = allSubmissions[currentStudent] || {};
     const diffResults = [];
     const allPaths = new Set([
       ...Object.keys(starterFiles),
@@ -91,7 +158,11 @@ const DiffViewer = () => {
     
     const file = e.dataTransfer.files[0];
     if (file?.type === 'application/zip' || file?.name.endsWith('.zip')) {
-      await processZipFile(file, isStarter);
+      if (isStarter) {
+        await processZipFile(file, true);
+      } else {
+        await processSubmissionsZip(file);
+      }
     } else {
       setError('Please drop a ZIP file');
     }
@@ -134,17 +205,42 @@ const DiffViewer = () => {
           onDragEnter={preventDefault}
         >
           <Upload className="mx-auto h-12 w-12 text-gray-400 mb-2" />
-          <p>Drop student submission ZIP here</p>
+          <p>Drop student submissions ZIP here</p>
           <p className="text-sm text-gray-500">
-            {Object.keys(submissionFiles).length} files loaded
+            {Object.keys(allSubmissions).length} students loaded
           </p>
         </div>
       </div>
 
-      {diffs.length > 0 && (
+      {Object.keys(allSubmissions).length > 0 && (
+        <div className="flex items-center gap-4 mb-6">
+          <Select value={currentStudent || ''} onValueChange={setCurrentStudent}>
+            <SelectTrigger className="w-[300px]">
+              <SelectValue placeholder="Select a student" />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.keys(allSubmissions).map(student => (
+                <SelectItem key={student} value={student}>
+                  {student}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          
+          <Button onClick={handleNextStudent}>
+            Next Student
+          </Button>
+          
+          <span className="text-sm text-gray-500">
+            {Object.keys(allSubmissions).length} submissions loaded
+          </span>
+        </div>
+      )}
+
+      {currentStudent && diffs.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Changes Found ({diffs.length})</CardTitle>
+            <CardTitle>Changes for {currentStudent} ({diffs.length} files)</CardTitle>
           </CardHeader>
           <CardContent>
             {diffs.map((diff, index) => (
