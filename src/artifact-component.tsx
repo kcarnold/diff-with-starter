@@ -1,120 +1,195 @@
-import React, { useState } from 'react';
-import { AlertCircle, Mail, Lock, User, Github, Facebook, Twitter } from 'lucide-react';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Upload, FileText, AlertTriangle } from 'lucide-react';
+import JSZip from 'jszip';
+import * as Diff from 'diff';
 
-const LoginForm = () => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [website, setWebsite] = useState('');
+const DiffViewer = () => {
+  const [starterFiles, setStarterFiles] = useState({});
+  const [submissionFiles, setSubmissionFiles] = useState({});
+  const [diffs, setDiffs] = useState([]);
   const [error, setError] = useState('');
 
-  const handleLogin = (e) => {
-    e.preventDefault();
-    if (!email || !password || !website) {
-      setError('Please fill in all fields');
-    } else {
-      setError('');
-      console.log('Login attempted:', { email, password, website });
-      // Here you would typically handle the login logic
-      alert(`Login attempted: ${email}, ${password}, ${website}`);
+  const processZipFile = async (file, isStarter = false) => {
+    try {
+      const zip = new JSZip();
+      const contents = await zip.loadAsync(file);
+      const files = {};
+      
+      for (const [path, zipEntry] of Object.entries(contents.files)) {
+        // Skip macOS special directories and non-Python files
+        if (!zipEntry.dir && 
+            !path.startsWith('__MACOSX/') && 
+            path.endsWith('.py')) {
+          const content = await zipEntry.async('string');
+          files[path] = content;
+        }
+      }
+      
+      if (isStarter) {
+        setStarterFiles(files);
+      } else {
+        setSubmissionFiles(files);
+      }
+    } catch (err) {
+      setError('Error processing ZIP file: ' + err.message);
     }
   };
 
-  const handleSocialLogin = (platform) => {
-    console.log(`${platform} login attempted`);
-    // Here you would typically handle the social login logic
-    alert(`${platform} login attempted`);
+  useEffect(() => {
+    if (Object.keys(starterFiles).length && Object.keys(submissionFiles).length) {
+      console.log('Generating diffs...');
+      generateDiffs();
+    }
+  }, [starterFiles, submissionFiles]);
+
+  const generateDiffs = () => {
+    const diffResults = [];
+    const allPaths = new Set([
+      ...Object.keys(starterFiles),
+      ...Object.keys(submissionFiles)
+    ]);
+    
+    for (const path of allPaths) {
+      const starterContent = starterFiles[path] || '';
+      const submissionContent = submissionFiles[path] || '';
+      
+      if (starterContent !== submissionContent) {
+        const diffLines = Diff.createPatch(
+          path,
+          starterContent,
+          submissionContent,
+          'starter',
+          'submission'
+        );
+
+        const changes = Diff.structuredPatch(
+          path,
+          path,
+          starterContent,
+          submissionContent
+        );
+
+        diffResults.push({
+          path,
+          status: !starterContent ? 'added' : 
+                 !submissionContent ? 'removed' : 
+                 'modified',
+          diffText: diffLines,
+          hunks: changes.hunks
+        });
+      }
+    }
+    
+    setDiffs(diffResults);
+  };
+
+  const handleDrop = async (e, isStarter) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const file = e.dataTransfer.files[0];
+    if (file?.type === 'application/zip' || file?.name.endsWith('.zip')) {
+      await processZipFile(file, isStarter);
+    } else {
+      setError('Please drop a ZIP file');
+    }
+  };
+
+  const preventDefault = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-100">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle className="text-2xl font-bold text-center">Demo Component</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="Enter your email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                icon={<Mail className="h-4 w-4 text-gray-500" />}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Enter your password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                icon={<Lock className="h-4 w-4 text-gray-500" />}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="website">Target Website</Label>
-              <Select onValueChange={setWebsite}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a website" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="website1">Website 1</SelectItem>
-                  <SelectItem value="website2">Website 2</SelectItem>
-                  <SelectItem value="website3">Website 3</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Button type="submit" className="w-full">Log In</Button>
-          </form>
+    <div className="p-4 max-w-6xl mx-auto">
+      <h1 className="text-2xl font-bold mb-6">Code Diff Viewer</h1>
+      
+      {error && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      
+      <div className="grid grid-cols-2 gap-4 mb-6">
+        <div
+          className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:bg-gray-50"
+          onDrop={(e) => handleDrop(e, true)}
+          onDragOver={preventDefault}
+          onDragEnter={preventDefault}
+        >
+          <Upload className="mx-auto h-12 w-12 text-gray-400 mb-2" />
+          <p>Drop starter code ZIP here</p>
+          <p className="text-sm text-gray-500">
+            {Object.keys(starterFiles).length} files loaded
+          </p>
+        </div>
+        
+        <div
+          className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:bg-gray-50"
+          onDrop={(e) => handleDrop(e, false)}
+          onDragOver={preventDefault}
+          onDragEnter={preventDefault}
+        >
+          <Upload className="mx-auto h-12 w-12 text-gray-400 mb-2" />
+          <p>Drop student submission ZIP here</p>
+          <p className="text-sm text-gray-500">
+            {Object.keys(submissionFiles).length} files loaded
+          </p>
+        </div>
+      </div>
 
-          {error && (
-            <Alert variant="destructive" className="mt-4">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-
-          <div className="relative mt-6">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-2 text-muted-foreground">Or continue with</span>
-            </div>
-          </div>
-
-          <div className="flex space-x-4 mt-6">
-            <Button variant="outline" className="w-full" onClick={() => handleSocialLogin('Github')}>
-              <Github className="mr-2 h-4 w-4" /> Github
-            </Button>
-            <Button variant="outline" className="w-full" onClick={() => handleSocialLogin('Facebook')}>
-              <Facebook className="mr-2 h-4 w-4" /> Facebook
-            </Button>
-            <Button variant="outline" className="w-full" onClick={() => handleSocialLogin('Twitter')}>
-              <Twitter className="mr-2 h-4 w-4" /> Twitter
-            </Button>
-          </div>
-
-          <div className="text-center text-sm mt-6">
-            Don't have an account?{' '}
-            <Button variant="link" className="p-0">
-              Sign up
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      {diffs.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Changes Found ({diffs.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {diffs.map((diff, index) => (
+              <div key={index} className="mb-6 last:mb-0">
+                <div className="flex items-center gap-2 mb-2">
+                  <FileText className="h-4 w-4" />
+                  <span className="font-medium">{diff.path}</span>
+                  <span className={`text-sm px-2 py-1 rounded ${
+                    diff.status === 'added' ? 'bg-green-100 text-green-800' :
+                    diff.status === 'removed' ? 'bg-red-100 text-red-800' :
+                    'bg-yellow-100 text-yellow-800'
+                  }`}>
+                    {diff.status}
+                  </span>
+                </div>
+                <div className="bg-gray-50 rounded overflow-x-auto">
+                  {diff.hunks.map((hunk, hunkIndex) => (
+                    <div key={hunkIndex} className="border-b last:border-b-0">
+                      <div className="bg-gray-100 px-4 py-1 text-sm text-gray-600">
+                        @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
+                      </div>
+                      <pre className="p-4 text-sm">
+                        {hunk.lines.map((line, lineIndex) => (
+                          <div
+                            key={lineIndex}
+                            className={`font-mono ${
+                              line.startsWith('+') ? 'bg-green-50 text-green-900' :
+                              line.startsWith('-') ? 'bg-red-50 text-red-900' :
+                              ''
+                            }`}
+                          >
+                            {line}
+                          </div>
+                        ))}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 };
 
-export default LoginForm;
+export default DiffViewer;
