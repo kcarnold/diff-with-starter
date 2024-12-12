@@ -124,8 +124,12 @@ const DiffViewer = () => {
     ]);
     
     for (const path of allPaths) {
-      const starterContent = starterFiles[path] || '';
-      const submissionContent = submissionFiles[path] || '';
+      // Normalize line endings and whitespace
+      const normalizeContent = (content: string) => 
+        content.replace(/\r\n/g, '\n').replace(/\s+$/gm, '');
+
+      const starterContent = normalizeContent(starterFiles[path] || '');
+      const submissionContent = normalizeContent(submissionFiles[path] || '');
       
       if (starterContent !== submissionContent) {
         const diffLines = Diff.createPatch(
@@ -133,24 +137,29 @@ const DiffViewer = () => {
           starterContent,
           submissionContent,
           'starter',
-          'submission'
+          'submission',
+          { ignoreWhitespace: true }
         );
 
         const changes = Diff.structuredPatch(
           path,
           path,
           starterContent,
-          submissionContent
+          submissionContent,
+          { ignoreWhitespace: true }
         );
 
-        diffResults.push({
-          path,
-          status: !starterContent ? 'added' : 
-                 !submissionContent ? 'removed' : 
-                 'modified',
-          diffText: diffLines,
-          hunks: changes.hunks
-        });
+        // Only add if there are actual changes (not just whitespace)
+        if (changes.hunks.length > 0) {
+          diffResults.push({
+            path,
+            status: !starterContent ? 'added' : 
+                   !submissionContent ? 'removed' : 
+                   'modified',
+            diffText: diffLines,
+            hunks: changes.hunks
+          });
+        }
       }
     }
     
