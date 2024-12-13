@@ -2,6 +2,7 @@
   "name": "artifact-viewer",
   "private": true,
   "version": "0.0.0",
+  "homepage": "https://kcarnold.github.io/diff-viewer/",
   "type": "module",
   "scripts": {
     "dev": "vite",
